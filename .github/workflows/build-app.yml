@@ -1,0 +1,143 @@
+name: Build App
+run-name: Build ${{ inputs.job_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Job id (set by the builder page)
+        required: true
+        type: string
+      app_name:
+        description: App name
+        required: true
+        type: string
+      app_id:
+        description: Package id
+        required: true
+        type: string
+      version:
+        description: Version
+        default: "1.0.0"
+        type: string
+      options:
+        description: Options JSON
+        default: "{}"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      APP_NAME: ${{ inputs.app_name }}
+      APP_ID: ${{ inputs.app_id }}
+      APP_VERSION: ${{ inputs.version }}
+      APP_OPTIONS: ${{ inputs.options }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for uploaded files
+        run: |
+          for i in 1 2 3 4 5 6; do
+            [ -d "jobs/$JOB_ID/app" ] && exit 0
+            sleep 5
+            git pull -q --ff-only || true
+          done
+          echo "Job files not found"
+          exit 1
+
+      - name: Signing key (created once, reused so updates install over old versions)
+        run: |
+          KS=keystore/builder.jks
+          if [ ! -f "$KS" ]; then
+            mkdir -p keystore
+            keytool -genkeypair -keystore "$KS" -alias builder -keyalg RSA -keysize 2048 -validity 36500 \
+              -storepass appbuilder -keypass appbuilder -dname "CN=App Builder, O=Personal, C=US"
+            git config user.name "app-builder"
+            git config user.email "app-builder@users.noreply.github.com"
+            git add "$KS"
+            git commit -qm "Add signing key"
+            for i in 1 2 3 4 5; do
+              git pull -q --rebase && git push -q && break
+              sleep 3
+            done
+          fi
+          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/$KS" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=appbuilder" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=builder" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=appbuilder" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare app (files, icon, splash, config)
+        run: node scripts/prepare-job.js
+
+      - name: Bundle Capacitor plugins
+        run: npm run build:plugins
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Patch manifest and gradle
+        run: node scripts/patch-android.js
+
+      - name: Generate icons and splash
+        run: npx -y @capacitor/assets generate --android
+
+      - name: Sync web files
+        run: npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          if ! ./gradlew assembleRelease; then
+            if [ -f MainActivity.path ]; then
+              echo "::warning::Build failed with browser-mode MainActivity. Retrying with the stock one."
+              cp MainActivity.orig "$GITHUB_WORKSPACE/$(cat MainActivity.path)"
+              ./gradlew assembleRelease
+            else
+              exit 1
+            fi
+          fi
+
+      - name: Publish release
+        run: |
+          SLUG=$(node -p "require('./build-meta.json').slug")
+          NAME=$(node -p "require('./build-meta.json').name")
+          VER=$(node -p "require('./build-meta.json').version")
+          APK=$(ls android/app/build/outputs/apk/release/*.apk | head -n1)
+          cp "$APK" "$SLUG-$VER.apk"
+          gh release delete "build-$JOB_ID" --yes --cleanup-tag >/dev/null 2>&1 || true
+          gh release create "build-$JOB_ID" "$SLUG-$VER.apk" --title "$NAME $VER" --notes-file release-notes.json
+
+      - name: Clean up uploaded files
+        run: |
+          git config user.name "app-builder"
+          git config user.email "app-builder@users.noreply.github.com"
+          git reset -q --hard
+          git pull -q --rebase || true
+          if [ -d "jobs/$JOB_ID" ]; then
+            git rm -rq "jobs/$JOB_ID"
+            git commit -qm "Clean up job $JOB_ID"
+            for i in 1 2 3 4 5; do
+              git pull -q --rebase && git push -q && break
+              sleep 3
+            done
+          fi

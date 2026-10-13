@@ -1,0 +1,18 @@
+{
+  "appId": "com.example.myapp",
+  "appName": "My App",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 600,
+      "launchAutoHide": true,
+      "backgroundColor": "#111111"
+    },
+    "CapacitorHttp": {
+      "enabled": false
+    }
+  }
+}

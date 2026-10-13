@@ -1,0 +1,8 @@
+node_modules/
+android/
+www/
+assets/
+package-lock.json
+build-meta.json
+release-notes.json
+*.apk

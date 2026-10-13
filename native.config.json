@@ -1,0 +1,19 @@
+{
+  "permissions": [
+    "INTERNET",
+    "ACCESS_NETWORK_STATE",
+    "VIBRATE",
+    "WAKE_LOCK",
+    "POST_NOTIFICATIONS",
+    "CAMERA",
+    "RECORD_AUDIO",
+    "MODIFY_AUDIO_SETTINGS",
+    "ACCESS_FINE_LOCATION",
+    "ACCESS_COARSE_LOCATION"
+  ],
+  "storagePermissions": true,
+  "orientation": null,
+  "deepLinkHost": null,
+  "browserMode": true,
+  "cleartext": true
+}
